@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { fetchTodos } from "@/lib/api"
+import { fetchTodos, createTodo, updateTodo } from "@/lib/api"
 import type { Todo, TodosResponse } from "@/types/todo"
 
 // ─── LoadingSkeleton ───────────────────────────────────────────────────────
@@ -27,42 +27,79 @@ function EmptyState() {
   return (
     <div className="border border-dashed border-cyan-800/50 py-16 text-center rounded-sm">
       <p className="text-4xl mb-4 text-cyan-600">◈</p>
-      <h3 className="text-base font-bold text-cyan-300 mb-2 tracking-widest">
-        EMPTY SYSTEM
-      </h3>
+      <h3 className="text-base font-bold text-cyan-300 mb-2 tracking-widest">EMPTY SYSTEM</h3>
       <p className="text-xs text-cyan-600 font-mono">No tasks in the system.</p>
     </div>
   )
 }
 
-// ─── TodoItem ──────────────────────────────────────────────────────────────
-function TodoItem({ todo }: { todo: Todo }) {
+// ─── Toast ─────────────────────────────────────────────────────────────────
+// Shows success or error feedback to the user
+function Toast({
+  message,
+  visible,
+  type,
+}: {
+  message: string
+  visible: boolean
+  type: "success" | "error"
+}) {
   return (
-    <div className="flex items-center gap-3 border border-cyan-900/40 bg-black p-4 rounded-sm
-      transition-all hover:border-cyan-400/60 hover:bg-cyan-950/20">
+    <div
+      className={`fixed bottom-8 right-8 z-50 flex items-center gap-3
+        border bg-black px-5 py-3 font-mono text-xs
+        transition-all duration-300 rounded-sm
+        ${type === "success" ? "border-cyan-500/70 text-cyan-300" : "border-red-500/70 text-red-400"}
+        ${visible ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"}`}
+    >
+      <span>{type === "success" ? "▶" : "✕"}</span>
+      {message}
+    </div>
+  )
+}
 
-      {/* Status indicator */}
-      <div className={`h-2 w-2 rounded-sm shrink-0
-        ${todo.completed ? "bg-cyan-400" : "bg-cyan-900"}`}
-      />
+// ─── TodoItem ──────────────────────────────────────────────────────────────
+// Receives onToggle to change completed state
+function TodoItem({
+  todo,
+  onToggle,
+}: {
+  todo: Todo
+  onToggle: (id: number) => void
+}) {
+  return (
+    <div
+      className={`flex items-center gap-3 border border-cyan-900/40 bg-black p-4 rounded-sm
+        transition-all hover:border-cyan-400/60 hover:bg-cyan-950/20
+        ${todo.completed ? "opacity-50" : ""}`}
+    >
+      {/* Checkbox — triggers optimistic update on click */}
+      <button
+        onClick={() => onToggle(todo.id)}
+        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-sm border-2 transition-all
+          ${todo.completed
+            ? "border-cyan-400 bg-cyan-400"
+            : "border-cyan-700 hover:border-cyan-400"
+          }`}
+      >
+        {todo.completed && <span className="text-xs font-bold text-black">✓</span>}
+      </button>
 
-      {/* Text */}
-      <span className={`flex-1 text-sm font-mono
-        ${todo.completed ? "line-through text-cyan-800" : "text-cyan-100"}`}>
+      <span
+        className={`flex-1 text-sm font-mono
+          ${todo.completed ? "line-through text-cyan-800" : "text-cyan-100"}`}
+      >
         {todo.todo}
       </span>
 
-      {/* ID */}
       <span className="shrink-0 font-mono text-xs text-cyan-600">
         #{String(todo.id).padStart(3, "0")}
       </span>
 
-      {/* Status badge */}
-      <span className={`shrink-0 px-2 py-0.5 text-xs font-mono rounded-sm border
-        ${todo.completed
-          ? "border-cyan-700 text-cyan-500"
-          : "border-cyan-900/50 text-cyan-700"
-        }`}>
+      <span
+        className={`shrink-0 px-2 py-0.5 text-xs font-mono rounded-sm border
+          ${todo.completed ? "border-cyan-700 text-cyan-500" : "border-cyan-900/50 text-cyan-700"}`}
+      >
         {todo.completed ? "DONE" : "PENDING"}
       </span>
     </div>
@@ -71,16 +108,23 @@ function TodoItem({ todo }: { todo: Todo }) {
 
 // ─── PAGE ──────────────────────────────────────────────────────────────────
 export default function Home() {
-  const [todos, setTodos]   = useState<Todo[]>([])
-  const [total, setTotal]   = useState(0)
-  const [page, setPage]     = useState(1)
+  const [todos, setTodos]         = useState<Todo[]>([])
+  const [total, setTotal]         = useState(0)
+  const [page, setPage]           = useState(1)
   const [isLoading, setIsLoading] = useState(false)
-  const [error, setError]   = useState<string | null>(null)
+  const [error, setError]         = useState<string | null>(null)
+  const [newTodo, setNewTodo]     = useState("")
+  const [isCreating, setIsCreating] = useState(false)
+  const [toast, setToast]         = useState({
+    visible: false,
+    message: "",
+    type: "success" as "success" | "error",
+  })
 
   const LIMIT      = 10
   const totalPages = Math.ceil(total / LIMIT)
 
-  // ── Fetch from API ───────────────────────────────────────────────────────
+  // ── Paginated fetch ─────────────────────────────────────────────────────
   useEffect(() => {
     async function loadTodos() {
       setIsLoading(true)
@@ -99,6 +143,55 @@ export default function Home() {
     loadTodos()
   }, [page])
 
+  // ── Helper toast ────────────────────────────────────────────────────────
+  function showToast(message: string, type: "success" | "error" = "success") {
+    setToast({ visible: true, message, type })
+    setTimeout(() => setToast((t) => ({ ...t, visible: false })), 2500)
+  }
+
+  // ── Create task ──────────────────────────────────────────────────────────
+  async function handleAdd() {
+    const text = newTodo.trim()
+    if (!text) return
+    setIsCreating(true)
+    try {
+      const created = await createTodo({ todo: text, completed: false, userId: 1 })
+      setTodos((prev) => [created, ...prev])
+      setNewTodo("")
+      showToast("TASK ADDED TO SYSTEM", "success")
+    } catch {
+      showToast("ERROR: Could not create task", "error")
+    } finally {
+      setIsCreating(false)
+    }
+  }
+
+  // ── Toggle with optimistic update ────────────────────────────────────────
+  // We use optimistic update for instant UX; DummyJSON API is reliable.
+  // If it fails, we revert to previous state. Rationale documented in README.
+  async function handleToggle(id: number) {
+    // Save previous state in case we need to revert
+    const previous = todos.find((t) => t.id === id)
+    if (!previous) return
+
+    // 1. Update UI immediately without waiting for API
+    setTodos((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t))
+    )
+
+    try {
+      // 2. Confirm change with API
+      await updateTodo(id, { completed: !previous.completed })
+      showToast(previous.completed ? "TASK REACTIVATED" : "TASK COMPLETED ✓", "success")
+    } catch {
+      // 3. If API fails, revert to previous value
+      setTodos((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, completed: previous.completed } : t))
+      )
+      showToast("ERROR: Could not update task", "error")
+    }
+  }
+
   return (
     <div className="min-h-screen bg-black text-cyan-100 font-mono">
 
@@ -115,9 +208,7 @@ export default function Home() {
       <header className="relative z-10 flex items-center justify-between border-b border-cyan-900/60 bg-black px-10 py-4">
         <div className="flex items-center gap-3">
           <div className="h-3 w-3 rounded-sm bg-cyan-400 animate-pulse shadow-[0_0_8px_rgba(34,211,238,0.8)]" />
-          <span className="text-lg font-bold tracking-widest text-cyan-300 uppercase">
-            TaskFlow
-          </span>
+          <span className="text-lg font-bold tracking-widest text-cyan-300 uppercase">TaskFlow</span>
           <span className="text-cyan-700 text-xs">// v1.0</span>
         </div>
         <div className="flex items-center gap-4 text-xs text-cyan-600">
@@ -135,9 +226,32 @@ export default function Home() {
           <p className="text-xs text-cyan-600 mb-1 uppercase tracking-widest">
             // task management system
           </p>
-          <h1 className="text-4xl font-bold tracking-tight text-cyan-300">
-            MY TASKS
-          </h1>
+          <h1 className="text-4xl font-bold tracking-tight text-cyan-300">MY TASKS</h1>
+        </div>
+
+        {/* New task form */}
+        <p className="text-xs text-cyan-600 tracking-widest mb-2 uppercase">// new task</p>
+        <div className="mb-8 flex gap-2">
+          <input
+            value={newTodo}
+            onChange={(e) => setNewTodo(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+            placeholder="Enter task description..."
+            disabled={isCreating}
+            className="flex-1 border border-cyan-900/60 bg-black px-4 py-3 text-sm
+              text-cyan-100 placeholder-cyan-800 outline-none rounded-sm
+              focus:border-cyan-400 transition-colors disabled:opacity-50"
+          />
+          <button
+            onClick={handleAdd}
+            disabled={isCreating || !newTodo.trim()}
+            className="border border-cyan-400 bg-cyan-950/30 px-5 py-3 text-sm font-bold
+              text-cyan-300 tracking-widest transition-all rounded-sm
+              hover:bg-cyan-400 hover:text-black
+              disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {isCreating ? "..." : "[+] ADD"}
+          </button>
         </div>
 
         {/* Counter */}
@@ -145,7 +259,7 @@ export default function Home() {
           // {total} TOTAL RECORDS
         </p>
 
-        {/* Error with retry button */}
+        {/* Error with retry */}
         {error && (
           <div className="mb-4 border border-red-700/60 bg-red-950/20 p-4 rounded-sm">
             <p className="text-xs text-red-400 mb-3">{error}</p>
@@ -167,7 +281,7 @@ export default function Home() {
         ) : (
           <div className="flex flex-col gap-1.5">
             {todos.map((todo) => (
-              <TodoItem key={todo.id} todo={todo} />
+              <TodoItem key={todo.id} todo={todo} onToggle={handleToggle} />
             ))}
           </div>
         )}
@@ -205,6 +319,9 @@ export default function Home() {
         )}
 
       </main>
+
+      <Toast message={toast.message} visible={toast.visible} type={toast.type} />
+
     </div>
   )
 }
