@@ -1,8 +1,10 @@
+/**
+ * CRUD mutations for todos. Requires setTodos from useTodos for shared state.
+ */
 import { useState } from "react"
 import { createTodo, updateTodo, deleteTodo } from "@/lib/api"
 import type { Todo } from "@/types/todo"
 
-// The hook needs setTodos from useTodos to update the shared list
 interface UseTodoMutationsProps {
   todos: Todo[]
   setTodos: React.Dispatch<React.SetStateAction<Todo[]>>
@@ -23,8 +25,6 @@ export function useTodoMutations({
 }: UseTodoMutationsProps): UseTodoMutationsReturn {
   const [isCreating, setIsCreating] = useState(false)
 
-  // ── Create todo ───────────────────────────────────────────────────────
-  // API does not persist new tasks — we add the returned todo to local state
   async function handleAdd(text: string): Promise<void> {
     if (!text.trim()) return
     setIsCreating(true)
@@ -39,10 +39,6 @@ export function useTodoMutations({
     }
   }
 
-  // ── Toggle with optimistic update ─────────────────────────────────────
-  // 1. Update UI immediately
-  // 2. Confirm with API
-  // 3. Revert if API fails
   async function handleToggle(id: number): Promise<void> {
     const previous = todos.find((t) => t.id === id)
     if (!previous) return
@@ -62,9 +58,6 @@ export function useTodoMutations({
     }
   }
 
-  // ── Delete todo — waits for API before removing from local state ──────
-  // Not using optimistic update here — delete is destructive and
-  // showing it gone before confirmation could confuse the user on failure
   async function handleDeleteConfirm(id: number): Promise<void> {
     try {
       await deleteTodo(id)

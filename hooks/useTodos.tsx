@@ -1,8 +1,11 @@
+/**
+ * Fetches todos from API, syncs to Zustand store, handles pagination and retry.
+ */
 import { useEffect, useState } from "react"
 import { fetchTodos } from "@/lib/api"
+import { useTodoStore } from "@/store/todoStore"
 import type { Todo, TodosResponse } from "@/types/todo"
 
-// Return type — everything the UI needs from this hook
 interface UseTodosReturn {
   todos: Todo[]
   total: number
@@ -12,26 +15,25 @@ interface UseTodosReturn {
   error: string | null
   setPage: (page: number) => void
   retry: () => void
-  setTodos: React.Dispatch<React.SetStateAction<Todo[]>>
+  setTodos: (todos: Todo[]) => void
 }
 
 const LIMIT = 10
 
 export function useTodos(): UseTodosReturn {
-  const [todos, setTodos]         = useState<Todo[]>([])
-  const [total, setTotal]         = useState(0)
-  const [page, setPage]           = useState(1)
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError]         = useState<string | null>(null)
+  const todos    = useTodoStore((state) => state.todos)
+  const setTodos = useTodoStore((state) => state.setTodos)
+  const setTotal = useTodoStore((state) => state.setTotal)
+  const total    = useTodoStore((state) => state.total)
 
-  // retryCount increments on every retry — guarantees useEffect re-runs
-  // even when page hasn't changed (setPage(p => p) would NOT work)
+  const [page, setPage]             = useState(1)
+  const [isLoading, setIsLoading]   = useState(false)
+  const [error, setError]           = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState(0)
 
   const totalPages = Math.ceil(total / LIMIT)
 
   useEffect(() => {
-    // initial fetch + updates
     async function loadTodos() {
       setIsLoading(true)
       setError(null)
@@ -47,7 +49,7 @@ export function useTodos(): UseTodosReturn {
       }
     }
     loadTodos()
-  }, [page, retryCount])
+  }, [page, retryCount, setTodos, setTotal])
 
   return {
     todos,

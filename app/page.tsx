@@ -1,8 +1,13 @@
 "use client"
-
-import { useEffect, useRef, useState } from "react"
-import { fetchTodos, createTodo, updateTodo, deleteTodo } from "@/lib/api"
-import type { Todo, TodosResponse } from "@/types/todo"
+/**
+ * Main task management page. Renders todo list, Cortana AI terminal,
+ * filters, pagination, and confirmation dialogs. Data lives in Zustand store.
+ */
+import { useRef, useState } from "react"
+import { useTodos } from "@/hooks/useTodos"
+import { useTodoStore } from "@/store/todoStore"
+import { updateTodo, deleteTodo } from "@/lib/api"
+import type { Todo } from "@/types/todo"
 import type { AgentResponse } from "@/app/api/agent/route"
 import {
   AlertDialog,
@@ -17,14 +22,15 @@ import {
 
 type Filter = "all" | "completed" | "pending"
 
-// Shape of a message in the Cortana terminal history
 interface TerminalMessage {
   id: number
   from: "user" | "cortana"
   text: string
 }
 
-// ─── LoadingSkeleton ───────────────────────────────────────────────────────
+/** Local tasks use Date.now() ids (>100k); API tasks use small ids (1–200). */
+const isLocalTask = (id: number) => id > 100000
+
 function LoadingSkeleton() {
   return (
     <div className="flex flex-col gap-2">
@@ -39,7 +45,6 @@ function LoadingSkeleton() {
   )
 }
 
-// ─── EmptyState ────────────────────────────────────────────────────────────
 function EmptyState({ filter }: { filter: Filter }) {
   const messages: Record<Filter, string> = {
     all:       "No tasks in the system.",
@@ -55,7 +60,6 @@ function EmptyState({ filter }: { filter: Filter }) {
   )
 }
 
-// ─── Toast ─────────────────────────────────────────────────────────────────
 function Toast({ message, visible, type }: { message: string; visible: boolean; type: "success" | "error" }) {
   return (
     <div className={`fixed bottom-8 right-8 z-50 flex items-center gap-3
@@ -69,8 +73,11 @@ function Toast({ message, visible, type }: { message: string; visible: boolean; 
   )
 }
 
-// ─── TodoItem ──────────────────────────────────────────────────────────────
-function TodoItem({ todo, onToggle, onDelete }: { todo: Todo; onToggle: (id: number) => void; onDelete: (id: number) => void }) {
+function TodoItem({ todo, onToggle, onDelete }: {
+  todo: Todo
+  onToggle: (id: number) => void
+  onDelete: (id: number) => void
+}) {
   return (
     <div className={`flex items-center gap-3 border border-cyan-900/40 bg-black p-4 rounded-sm
       transition-all hover:border-cyan-400/60 hover:bg-cyan-950/20 ${todo.completed ? "opacity-50" : ""}`}
@@ -85,7 +92,9 @@ function TodoItem({ todo, onToggle, onDelete }: { todo: Todo; onToggle: (id: num
       <span className={`flex-1 text-sm font-mono select-none ${todo.completed ? "line-through text-cyan-800" : "text-cyan-100"}`}>
         {todo.todo}
       </span>
-      <span className="shrink-0 font-mono text-xs text-cyan-600">#{String(todo.id).padStart(3, "0")}</span>
+      <span className="shrink-0 font-mono text-xs text-cyan-600">
+        #{String(todo.id).padStart(3, "0")}
+      </span>
       <span className={`shrink-0 px-2 py-0.5 text-xs font-mono rounded-sm border
         ${todo.completed ? "border-cyan-700 text-cyan-500" : "border-cyan-900/50 text-cyan-700"}`}>
         {todo.completed ? "DONE" : "PENDING"}
@@ -101,24 +110,13 @@ function TodoItem({ todo, onToggle, onDelete }: { todo: Todo; onToggle: (id: num
   )
 }
 
-// ─── CortanaTerminal ───────────────────────────────────────────────────────
-// Minimalist terminal input with conversation history
-function CortanaTerminal({
-  onCommand,
-  isThinking,
-  history,
-}: {
+function CortanaTerminal({ onCommand, isThinking, history }: {
   onCommand: (text: string) => void
   isThinking: boolean
   history: TerminalMessage[]
 }) {
-  const [input, setInput]   = useState("")
-  const bottomRef           = useRef<HTMLDivElement>(null)
-
-  // Auto-scroll to latest message
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [history])
+  const [input, setInput] = useState("")
+  const bottomRef         = useRef<HTMLDivElement>(null)
 
   function handleSubmit() {
     const text = input.trim()
@@ -128,10 +126,7 @@ function CortanaTerminal({
   }
 
   return (
-    <div className="border border-cyan-700/50 rounded-sm bg-black overflow-hidden
-      shadow-[0_0_30px_rgba(34,211,238,0.08)]">
-
-      {/* Terminal header */}
+    <div className="border border-cyan-700/50 rounded-sm bg-black overflow-hidden shadow-[0_0_30px_rgba(34,211,238,0.08)]">
       <div className="flex items-center justify-between border-b border-cyan-900/50 px-4 py-2 bg-cyan-950/20">
         <div className="flex items-center gap-2">
           <div className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_6px_rgba(34,211,238,0.8)]" />
@@ -141,9 +136,7 @@ function CortanaTerminal({
         </div>
         <span className="text-xs text-cyan-700">UNSC TACTICAL OS v7.0</span>
       </div>
-
-      {/* Conversation history */}
-      <div className="h-48 overflow-y-auto px-4 py-3 flex flex-col gap-2 scrollbar-thin">
+      <div className="h-48 overflow-y-auto px-4 py-3 flex flex-col gap-2">
         {history.length === 0 && (
           <p className="text-xs text-cyan-700 font-mono italic">
             Hello, Chief. I&apos;m online and ready. Tell me what needs to be done.
@@ -157,7 +150,6 @@ function CortanaTerminal({
             <span>{msg.text}</span>
           </div>
         ))}
-        {/* Thinking indicator */}
         {isThinking && (
           <div className="flex gap-2 text-xs font-mono text-cyan-700">
             <span className="shrink-0">CORTANA &gt;</span>
@@ -166,8 +158,6 @@ function CortanaTerminal({
         )}
         <div ref={bottomRef} />
       </div>
-
-      {/* Input */}
       <div className="flex items-center gap-2 border-t border-cyan-900/50 px-4 py-3">
         <span className="text-cyan-600 text-xs font-mono shrink-0">CHIEF &gt;</span>
         <input
@@ -193,48 +183,22 @@ function CortanaTerminal({
   )
 }
 
-// ─── PAGE ──────────────────────────────────────────────────────────────────
 export default function Home() {
-  const [todos, setTodos]           = useState<Todo[]>([])
-  const [total, setTotal]           = useState(0)
-  const [page, setPage]             = useState(1)
-  const [isLoading, setIsLoading]   = useState(false)
-  const [error, setError]           = useState<string | null>(null)
-  const [newTodo, setNewTodo]       = useState("")
-  const [isCreating, setIsCreating] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<number | null>(null)
-  const [filter, setFilter]         = useState<Filter>("all")
-  const [retryCount, setRetryCount] = useState(0)
+  const todos        = useTodoStore((state) => state.todos)
+  const addTodo      = useTodoStore((state) => state.addTodo)
+  const updateTodoInStore = useTodoStore((state) => state.updateTodo)
+  const removeTodo   = useTodoStore((state) => state.removeTodo)
 
-  // Cortana state
+  const [filter, setFilter]             = useState<Filter>("all")
+  const [newTodo, setNewTodo]           = useState("")
+  const [isCreating, setIsCreating]     = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<number | null>(null)
   const [terminalHistory, setTerminalHistory] = useState<TerminalMessage[]>([])
   const [isThinking, setIsThinking]           = useState(false)
-  // Pending agent action that needs user confirmation
   const [pendingAction, setPendingAction]     = useState<AgentResponse | null>(null)
-
   const [toast, setToast] = useState({ visible: false, message: "", type: "success" as "success" | "error" })
 
-  const LIMIT      = 10
-  const totalPages = Math.ceil(total / LIMIT)
-
-  // ── Paginated fetch ─────────────────────────────────────────────────────
-  useEffect(() => {
-    async function loadTodos() {
-      setIsLoading(true)
-      setError(null)
-      try {
-        const data: TodosResponse = await fetchTodos(page, LIMIT)
-        setTodos(data.todos)
-        setTotal(data.total)
-      } catch (err) {
-        setError("ERROR: Could not connect to the API.")
-        console.error(err)
-      } finally {
-        setIsLoading(false)
-      }
-    }
-    loadTodos()
-  }, [page, retryCount])
+  const { total, page, totalPages, isLoading, error, setPage, retry } = useTodos()
 
   const filtered = todos.filter((t) => {
     if (filter === "completed") return t.completed
@@ -254,13 +218,17 @@ export default function Home() {
     setTerminalHistory((prev) => [...prev, { id: Date.now(), from, text }])
   }
 
-  // ── Create todo ─────────────────────────────────────────────────────────
   async function handleAdd(text: string) {
     if (!text.trim()) return
     setIsCreating(true)
     try {
-      const created = await createTodo({ todo: text, completed: false, userId: 1 })
-      setTodos((prev) => [created, ...prev])
+      const localTodo: Todo = {
+        id:        Date.now(),
+        todo:      text.trim(),
+        completed: false,
+        userId:    1,
+      }
+      addTodo(localTodo)
       showToast("TASK ADDED TO SYSTEM", "success")
     } catch {
       showToast("ERROR: Could not create task", "error")
@@ -269,26 +237,30 @@ export default function Home() {
     }
   }
 
-  // ── Toggle with optimistic update ───────────────────────────────────────
   async function handleToggle(id: number) {
     const previous = todos.find((t) => t.id === id)
     if (!previous) return
-    setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t)))
+
+    updateTodoInStore(id, { completed: !previous.completed })
+
     try {
-      await updateTodo(id, { completed: !previous.completed })
+      if (!isLocalTask(id)) {
+        await updateTodo(id, { completed: !previous.completed })
+      }
       showToast(previous.completed ? "TASK REACTIVATED" : "TASK COMPLETED ✓", "success")
     } catch {
-      setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, completed: previous.completed } : t)))
+      updateTodoInStore(id, { completed: previous.completed })
       showToast("ERROR: Could not update task", "error")
     }
   }
 
-  // ── Delete todo ─────────────────────────────────────────────────────────
   async function handleDeleteConfirm() {
     if (deleteTarget === null) return
     try {
-      await deleteTodo(deleteTarget)
-      setTodos((prev) => prev.filter((t) => t.id !== deleteTarget))
+      if (!isLocalTask(deleteTarget)) {
+        await deleteTodo(deleteTarget)
+      }
+      removeTodo(deleteTarget)
       showToast("RECORD DELETED", "success")
     } catch {
       showToast("ERROR: Could not delete task", "error")
@@ -297,10 +269,8 @@ export default function Home() {
     }
   }
 
-  // ── Execute confirmed agent action ──────────────────────────────────────
   async function executeAgentAction(action: AgentResponse) {
     const { action: type, payload } = action
-
     if (type === "create" && payload.todoText) {
       await handleAdd(payload.todoText)
     } else if (type === "toggle" && payload.todoId) {
@@ -312,22 +282,17 @@ export default function Home() {
     }
   }
 
-  // ── Send command to Cortana ─────────────────────────────────────────────
   async function handleAgentCommand(userMessage: string) {
     addToHistory("user", userMessage)
     setIsThinking(true)
-
     try {
       const res = await fetch("/api/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userMessage, todos }),
       })
-
       const agentResponse: AgentResponse = await res.json()
       addToHistory("cortana", agentResponse.message)
-
-      // Actions that modify data need confirmation before executing
       if (agentResponse.action !== "none") {
         setPendingAction(agentResponse)
       }
@@ -338,7 +303,6 @@ export default function Home() {
     }
   }
 
-  // ── Confirm pending agent action ────────────────────────────────────────
   async function handleAgentConfirm() {
     if (!pendingAction) return
     await executeAgentAction(pendingAction)
@@ -348,18 +312,18 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-black text-cyan-100 font-mono">
 
-      {/* Decorative CRT scanlines */}
+      {/* CRT scanline overlay */}
       <div
         className="fixed inset-0 pointer-events-none z-0 opacity-30"
         style={{ background: "repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(34,211,238,0.03) 2px, rgba(34,211,238,0.03) 4px)" }}
       />
 
-      {/* HEADER */}
+      {/* Header */}
       <header className="relative z-10 flex items-center justify-between border-b border-cyan-900/60 bg-black px-10 py-4">
         <div className="flex items-center gap-3">
           <div className="h-3 w-3 rounded-sm bg-cyan-400 animate-pulse shadow-[0_0_8px_rgba(34,211,238,0.8)]" />
           <span className="text-lg font-bold tracking-widest text-cyan-300 uppercase">TaskFlow</span>
-          <span className="text-cyan-700 text-xs">{`// v1.0`}</span>
+          <span className="text-cyan-700 text-xs">{" // v1.0"}</span>
         </div>
         <div className="flex items-center gap-4 text-xs text-cyan-600">
           <span>SYS:ONLINE</span>
@@ -368,18 +332,18 @@ export default function Home() {
         </div>
       </header>
 
-      {/* MAIN */}
+      {/* Main content */}
       <main className="relative z-10 mx-auto max-w-3xl px-6 py-10">
 
-        {/* Title */}
+        {/* Section title */}
         <div className="mb-10 border-l-2 border-cyan-400 pl-4">
-          <p className="text-xs text-cyan-600 mb-1 uppercase tracking-widest">{`// task management system`}</p>
+          <p className="text-xs text-cyan-600 mb-1 uppercase tracking-widest">{"// task management system"}</p>
           <h1 className="text-4xl font-bold tracking-tight text-cyan-300">MY TASKS</h1>
         </div>
 
-        {/* Cortana Terminal */}
+        {/* AI chat terminal */}
         <div className="mb-10">
-          <p className="text-xs text-cyan-600 tracking-widest mb-2 uppercase">{`// cortana interface`}</p>
+          <p className="text-xs text-cyan-600 tracking-widest mb-2 uppercase">{"// cortana interface"}</p>
           <CortanaTerminal
             onCommand={handleAgentCommand}
             isThinking={isThinking}
@@ -387,7 +351,7 @@ export default function Home() {
           />
         </div>
 
-        {/* Stats */}
+        {/* Task stats */}
         <div className="mb-8 grid grid-cols-3 gap-2">
           {[
             { label: "TOTAL",     value: todos.length,  color: "text-cyan-300"  },
@@ -401,8 +365,8 @@ export default function Home() {
           ))}
         </div>
 
-        {/* New task form */}
-        <p className="text-xs text-cyan-600 tracking-widest mb-2 uppercase">{`// new task`}</p>
+        {/* Add task form */}
+        <p className="text-xs text-cyan-600 tracking-widest mb-2 uppercase">{"// new task"}</p>
         <div className="mb-8 flex gap-2">
           <input
             value={newTodo}
@@ -425,8 +389,8 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Filters */}
-        <p className="text-xs text-cyan-600 tracking-widest mb-2 uppercase">{`// filter`}</p>
+        {/* Filter buttons */}
+        <p className="text-xs text-cyan-600 tracking-widest mb-2 uppercase">{"// filter"}</p>
         <div className="mb-5 flex gap-2">
           {(["all", "completed", "pending"] as Filter[]).map((f) => (
             <button
@@ -443,17 +407,16 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Results counter */}
+        {/* Record count */}
         <p className="text-xs text-cyan-600 tracking-widest mb-3">
-          {`// ${filtered.length} ${filtered.length === 1 ? "RECORD" : "RECORDS"} FOUND`}
-        </p>
+          {`// ${filtered.length} ${filtered.length === 1 ? "RECORD" : "RECORDS"} FOUND`}</p>
 
-        {/* Error with retry */}
+        {/* API error + retry */}
         {error && (
           <div className="mb-4 border border-red-700/60 bg-red-950/20 p-4 rounded-sm">
             <p className="text-xs text-red-400 mb-3">{error}</p>
             <button
-              onClick={() => setRetryCount((c) => c + 1)}
+              onClick={retry}
               className="border border-red-700/60 px-3 py-1.5 text-xs text-red-400
                 cursor-pointer hover:bg-red-900/30 transition-all rounded-sm"
             >
@@ -462,7 +425,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* Task list / loading / empty */}
+        {/* List, loading skeleton, or empty state */}
         {isLoading ? (
           <LoadingSkeleton />
         ) : filtered.length === 0 ? (
@@ -475,7 +438,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* Pagination */}
+        {/* Page navigation */}
         {!isLoading && !error && totalPages > 0 && (
           <div className="mt-8 flex items-center justify-between border-t border-cyan-900/40 pt-6">
             <span className="text-xs text-cyan-600">PAGE {page}/{totalPages} — {total} TOTAL RECORDS</span>
@@ -507,7 +470,7 @@ export default function Home() {
 
       </main>
 
-      {/* Cortana action confirmation dialog */}
+      {/* AI action confirmation */}
       <AlertDialog open={pendingAction !== null} onOpenChange={() => setPendingAction(null)}>
         <AlertDialogContent className="border border-cyan-700/60 bg-black font-mono">
           <AlertDialogHeader>
@@ -516,23 +479,14 @@ export default function Home() {
             </AlertDialogTitle>
             <AlertDialogDescription className="text-cyan-600 text-xs">
               Action: <span className="text-cyan-400 uppercase">{pendingAction?.action}</span>
-              {pendingAction?.payload.todoText && (
-                <span> — &quot;{pendingAction.payload.todoText}&quot;</span>
-              )}
-              {pendingAction?.payload.todoId && (
-                <span> — Task #{String(pendingAction.payload.todoId).padStart(3, "0")}</span>
-              )}
-              {pendingAction?.payload.filter && (
-                <span> — Filter: {pendingAction.payload.filter.toUpperCase()}</span>
-              )}
+              {pendingAction?.payload.todoText && <span> — &quot;{pendingAction.payload.todoText}&quot;</span>}
+              {pendingAction?.payload.todoId && <span> — Task #{String(pendingAction.payload.todoId).padStart(3, "0")}</span>}
+              {pendingAction?.payload.filter && <span> — Filter: {pendingAction.payload.filter.toUpperCase()}</span>}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel
-              onClick={() => {
-                addToHistory("cortana", "Understood, Chief. Standing by.")
-                setPendingAction(null)
-              }}
+              onClick={() => { addToHistory("cortana", "Understood, Chief. Standing by."); setPendingAction(null) }}
               className="border border-cyan-800 bg-transparent text-cyan-400
                 hover:bg-cyan-950 hover:text-cyan-200 font-mono text-xs cursor-pointer"
             >
@@ -549,7 +503,7 @@ export default function Home() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Manual delete confirmation dialog */}
+      {/* Delete confirmation */}
       <AlertDialog
         open={deleteTarget !== null && pendingAction === null}
         onOpenChange={() => setDeleteTarget(null)}

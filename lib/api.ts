@@ -1,3 +1,6 @@
+/**
+ * Todo API client. Uses DummyJSON-compatible endpoints.
+ */
 import {
     Todo,
     TodosResponse,
@@ -8,7 +11,6 @@ import {
   
   const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
   
-  // Generic wrapper to handle network and API errors uniformly
   async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     const res = await fetch(`${BASE_URL}${path}`, {
       headers: { "Content-Type": "application/json" },
@@ -22,18 +24,15 @@ import {
     return res.json() as Promise<T>;
   }
   
-  // GET /todos?limit=10&skip=0
   export function fetchTodos(page: number, limit = 10): Promise<TodosResponse> {
     const skip = (page - 1) * limit;
     return apiFetch<TodosResponse>(`/todos?limit=${limit}&skip=${skip}`);
   }
   
-  // GET /todos/{id}
   export function fetchTodoById(id: number): Promise<Todo> {
     return apiFetch<Todo>(`/todos/${id}`);
   }
   
-  // POST /todos/add
   export function createTodo(payload: CreateTodoPayload): Promise<Todo> {
     return apiFetch<Todo>("/todos/add", {
       method: "POST",
@@ -41,7 +40,6 @@ import {
     });
   }
   
-  // PATCH /todos/{id}
   export function updateTodo(
     id: number,
     payload: UpdateTodoPayload
@@ -52,7 +50,6 @@ import {
     });
   }
   
-  // DELETE /todos/{id}
   export function deleteTodo(id: number): Promise<DeleteTodoResponse> {
     return apiFetch<DeleteTodoResponse>(`/todos/${id}`, {
       method: "DELETE",

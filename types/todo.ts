@@ -1,3 +1,4 @@
+/** Todo and API payload types (DummyJSON-compatible). */
 export interface Todo {
     id: number;
     todo: string;

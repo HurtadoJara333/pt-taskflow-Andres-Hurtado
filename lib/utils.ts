@@ -1,3 +1,4 @@
+/** Tailwind class merger (clsx + twMerge). */
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
 

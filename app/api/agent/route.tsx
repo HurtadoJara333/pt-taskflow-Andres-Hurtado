@@ -1,3 +1,7 @@
+/**
+ * Cortana AI API route. Parses user commands and returns structured actions
+ * (create, delete, toggle, filter) via Groq LLM.
+ */
 import { NextRequest, NextResponse } from "next/server"
 
 export interface AgentResponse {
@@ -65,7 +69,6 @@ Rules:
 
     const data = await response.json()
 
-    // Handle API-level errors (quota, invalid key, etc.)
     if (!response.ok) {
       console.error("Groq error:", data.error?.message)
       return NextResponse.json({
