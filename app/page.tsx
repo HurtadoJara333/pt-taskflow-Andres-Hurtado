@@ -3,12 +3,14 @@
  * Main task management page. Renders todo list, Cortana AI terminal,
  * filters, pagination, and confirmation dialogs. Data lives in Zustand store.
  */
-import { useRef, useState } from "react"
+import { useState } from "react"
 import { useTodos } from "@/hooks/useTodos"
 import { useTodoStore } from "@/store/todoStore"
 import { updateTodo, deleteTodo } from "@/lib/api"
 import type { Todo } from "@/types/todo"
-import type { AgentResponse } from "@/app/api/agent/route"
+import { CortanaTerminal } from "@/components/cortanaTerminal"
+import { Toast } from "@/components/ui/toast"
+import { useCortana } from "@/hooks/useCortana"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,12 +23,6 @@ import {
 } from "@/components/ui/alert-dialog"
 
 type Filter = "all" | "completed" | "pending"
-
-interface TerminalMessage {
-  id: number
-  from: "user" | "cortana"
-  text: string
-}
 
 /** Local tasks use Date.now() ids (>100k); API tasks use small ids (1–200). */
 const isLocalTask = (id: number) => id > 100000
@@ -56,19 +52,6 @@ function EmptyState({ filter }: { filter: Filter }) {
       <p className="text-4xl mb-4 text-cyan-600">◈</p>
       <h3 className="text-base font-bold text-cyan-300 mb-2 tracking-widest">EMPTY SYSTEM</h3>
       <p className="text-xs text-cyan-600 font-mono">{messages[filter]}</p>
-    </div>
-  )
-}
-
-function Toast({ message, visible, type }: { message: string; visible: boolean; type: "success" | "error" }) {
-  return (
-    <div className={`fixed bottom-8 right-8 z-50 flex items-center gap-3
-      border bg-black px-5 py-3 font-mono text-xs transition-all duration-300 rounded-sm
-      ${type === "success" ? "border-cyan-500/70 text-cyan-300" : "border-red-500/70 text-red-400"}
-      ${visible ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"}`}
-    >
-      <span>{type === "success" ? "▶" : "✕"}</span>
-      {message}
     </div>
   )
 }
@@ -110,79 +93,6 @@ function TodoItem({ todo, onToggle, onDelete }: {
   )
 }
 
-function CortanaTerminal({ onCommand, isThinking, history }: {
-  onCommand: (text: string) => void
-  isThinking: boolean
-  history: TerminalMessage[]
-}) {
-  const [input, setInput] = useState("")
-  const bottomRef         = useRef<HTMLDivElement>(null)
-
-  function handleSubmit() {
-    const text = input.trim()
-    if (!text || isThinking) return
-    onCommand(text)
-    setInput("")
-  }
-
-  return (
-    <div className="border border-cyan-700/50 rounded-sm bg-black overflow-hidden shadow-[0_0_30px_rgba(34,211,238,0.08)]">
-      <div className="flex items-center justify-between border-b border-cyan-900/50 px-4 py-2 bg-cyan-950/20">
-        <div className="flex items-center gap-2">
-          <div className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_6px_rgba(34,211,238,0.8)]" />
-          <span className="text-xs font-bold tracking-widest text-cyan-400 uppercase">
-            CORTANA // AI INTERFACE
-          </span>
-        </div>
-        <span className="text-xs text-cyan-700">UNSC TACTICAL OS v7.0</span>
-      </div>
-      <div className="h-48 overflow-y-auto px-4 py-3 flex flex-col gap-2">
-        {history.length === 0 && (
-          <p className="text-xs text-cyan-700 font-mono italic">
-            Hello, Chief. I&apos;m online and ready. Tell me what needs to be done.
-          </p>
-        )}
-        {history.map((msg) => (
-          <div key={msg.id} className={`flex gap-2 text-xs font-mono ${msg.from === "user" ? "text-cyan-300" : "text-cyan-500"}`}>
-            <span className="shrink-0 text-cyan-700">
-              {msg.from === "user" ? "CHIEF >" : "CORTANA >"}
-            </span>
-            <span>{msg.text}</span>
-          </div>
-        ))}
-        {isThinking && (
-          <div className="flex gap-2 text-xs font-mono text-cyan-700">
-            <span className="shrink-0">CORTANA &gt;</span>
-            <span className="animate-pulse">processing...</span>
-          </div>
-        )}
-        <div ref={bottomRef} />
-      </div>
-      <div className="flex items-center gap-2 border-t border-cyan-900/50 px-4 py-3">
-        <span className="text-cyan-600 text-xs font-mono shrink-0">CHIEF &gt;</span>
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-          placeholder="Give me an order..."
-          disabled={isThinking}
-          className="flex-1 bg-transparent text-xs font-mono text-cyan-200
-            placeholder-cyan-800 outline-none disabled:opacity-50 cursor-text"
-        />
-        <button
-          onClick={handleSubmit}
-          disabled={isThinking || !input.trim()}
-          className="text-xs font-mono text-cyan-600 cursor-pointer border border-cyan-900/50
-            px-3 py-1 rounded-sm transition-all hover:border-cyan-500 hover:text-cyan-300
-            disabled:opacity-30 disabled:cursor-not-allowed"
-        >
-          [SEND]
-        </button>
-      </div>
-    </div>
-  )
-}
-
 export default function Home() {
   const todos        = useTodoStore((state) => state.todos)
   const addTodo      = useTodoStore((state) => state.addTodo)
@@ -193,10 +103,22 @@ export default function Home() {
   const [newTodo, setNewTodo]           = useState("")
   const [isCreating, setIsCreating]     = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null)
-  const [terminalHistory, setTerminalHistory] = useState<TerminalMessage[]>([])
-  const [isThinking, setIsThinking]           = useState(false)
-  const [pendingAction, setPendingAction]     = useState<AgentResponse | null>(null)
   const [toast, setToast] = useState({ visible: false, message: "", type: "success" as "success" | "error" })
+
+  const {
+    terminalHistory,
+    isThinking,
+    pendingAction,
+    handleCommand: handleAgentCommand,
+    handleConfirm: handleAgentConfirm,
+    cancelPendingAction,
+  } = useCortana({
+    todos,
+    onCreateTodo: handleAdd,
+    onToggleTodo: handleToggle,
+    onDeleteTodo: setDeleteTarget,
+    onFilter: setFilter,
+  })
 
   const { total, page, totalPages, isLoading, error, setPage, retry } = useTodos()
 
@@ -212,10 +134,6 @@ export default function Home() {
   function showToast(message: string, type: "success" | "error" = "success") {
     setToast({ visible: true, message, type })
     setTimeout(() => setToast((t) => ({ ...t, visible: false })), 2500)
-  }
-
-  function addToHistory(from: "user" | "cortana", text: string) {
-    setTerminalHistory((prev) => [...prev, { id: Date.now(), from, text }])
   }
 
   async function handleAdd(text: string) {
@@ -267,46 +185,6 @@ export default function Home() {
     } finally {
       setDeleteTarget(null)
     }
-  }
-
-  async function executeAgentAction(action: AgentResponse) {
-    const { action: type, payload } = action
-    if (type === "create" && payload.todoText) {
-      await handleAdd(payload.todoText)
-    } else if (type === "toggle" && payload.todoId) {
-      await handleToggle(payload.todoId)
-    } else if (type === "delete" && payload.todoId) {
-      setDeleteTarget(payload.todoId)
-    } else if (type === "filter" && payload.filter) {
-      setFilter(payload.filter)
-    }
-  }
-
-  async function handleAgentCommand(userMessage: string) {
-    addToHistory("user", userMessage)
-    setIsThinking(true)
-    try {
-      const res = await fetch("/api/agent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userMessage, todos }),
-      })
-      const agentResponse: AgentResponse = await res.json()
-      addToHistory("cortana", agentResponse.message)
-      if (agentResponse.action !== "none") {
-        setPendingAction(agentResponse)
-      }
-    } catch {
-      addToHistory("cortana", "I lost connection for a moment. Try again, Chief.")
-    } finally {
-      setIsThinking(false)
-    }
-  }
-
-  async function handleAgentConfirm() {
-    if (!pendingAction) return
-    await executeAgentAction(pendingAction)
-    setPendingAction(null)
   }
 
   return (
@@ -471,7 +349,7 @@ export default function Home() {
       </main>
 
       {/* AI action confirmation */}
-      <AlertDialog open={pendingAction !== null} onOpenChange={() => setPendingAction(null)}>
+      <AlertDialog open={pendingAction !== null} onOpenChange={() => cancelPendingAction()}>
         <AlertDialogContent className="border border-cyan-700/60 bg-black font-mono">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-cyan-300 tracking-widest uppercase">
@@ -486,7 +364,7 @@ export default function Home() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel
-              onClick={() => { addToHistory("cortana", "Understood, Chief. Standing by."); setPendingAction(null) }}
+              onClick={() => cancelPendingAction()}
               className="border border-cyan-800 bg-transparent text-cyan-400
                 hover:bg-cyan-950 hover:text-cyan-200 font-mono text-xs cursor-pointer"
             >
