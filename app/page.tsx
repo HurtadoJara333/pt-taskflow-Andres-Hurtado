@@ -1,8 +1,18 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { fetchTodos, createTodo, updateTodo } from "@/lib/api"
+import { fetchTodos, createTodo, updateTodo, deleteTodo } from "@/lib/api"
 import type { Todo, TodosResponse } from "@/types/todo"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 // ─── LoadingSkeleton ───────────────────────────────────────────────────────
 function LoadingSkeleton() {
@@ -34,7 +44,6 @@ function EmptyState() {
 }
 
 // ─── Toast ─────────────────────────────────────────────────────────────────
-// Shows success or error feedback to the user
 function Toast({
   message,
   visible,
@@ -63,9 +72,11 @@ function Toast({
 function TodoItem({
   todo,
   onToggle,
+  onDelete,
 }: {
   todo: Todo
   onToggle: (id: number) => void
+  onDelete: (id: number) => void
 }) {
   return (
     <div
@@ -73,7 +84,7 @@ function TodoItem({
         transition-all hover:border-cyan-400/60 hover:bg-cyan-950/20
         ${todo.completed ? "opacity-50" : ""}`}
     >
-      {/* Checkbox — triggers optimistic update on click */}
+      {/* Checkbox with optimistic update */}
       <button
         onClick={() => onToggle(todo.id)}
         className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-sm border-2 transition-all
@@ -102,20 +113,34 @@ function TodoItem({
       >
         {todo.completed ? "DONE" : "PENDING"}
       </span>
+
+      {/* Delete button — opens ConfirmDialog */}
+      <button
+        onClick={() => onDelete(todo.id)}
+        className="shrink-0 border border-transparent px-2 py-1 text-xs font-mono text-cyan-600
+          transition-all hover:border-red-500/60 hover:text-red-400 rounded-sm"
+      >
+        [DEL]
+      </button>
     </div>
   )
 }
 
 // ─── PAGE ──────────────────────────────────────────────────────────────────
 export default function Home() {
-  const [todos, setTodos]         = useState<Todo[]>([])
-  const [total, setTotal]         = useState(0)
-  const [page, setPage]           = useState(1)
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError]         = useState<string | null>(null)
-  const [newTodo, setNewTodo]     = useState("")
+  const [todos, setTodos]           = useState<Todo[]>([])
+  const [total, setTotal]           = useState(0)
+  const [page, setPage]             = useState(1)
+  const [isLoading, setIsLoading]   = useState(false)
+  const [error, setError]           = useState<string | null>(null)
+  const [newTodo, setNewTodo]       = useState("")
   const [isCreating, setIsCreating] = useState(false)
-  const [toast, setToast]         = useState({
+
+  // deleteTarget stores the id of the task the user wants to delete.
+  // If null, dialog is closed. If a number, dialog is open.
+  const [deleteTarget, setDeleteTarget] = useState<number | null>(null)
+
+  const [toast, setToast] = useState({
     visible: false,
     message: "",
     type: "success" as "success" | "error",
@@ -167,28 +192,39 @@ export default function Home() {
   }
 
   // ── Toggle with optimistic update ────────────────────────────────────────
-  // We use optimistic update for instant UX; DummyJSON API is reliable.
-  // If it fails, we revert to previous state. Rationale documented in README.
   async function handleToggle(id: number) {
-    // Save previous state in case we need to revert
     const previous = todos.find((t) => t.id === id)
     if (!previous) return
 
-    // 1. Update UI immediately without waiting for API
     setTodos((prev) =>
       prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t))
     )
 
     try {
-      // 2. Confirm change with API
       await updateTodo(id, { completed: !previous.completed })
       showToast(previous.completed ? "TASK REACTIVATED" : "TASK COMPLETED ✓", "success")
     } catch {
-      // 3. If API fails, revert to previous value
       setTodos((prev) =>
         prev.map((t) => (t.id === id ? { ...t, completed: previous.completed } : t))
       )
       showToast("ERROR: Could not update task", "error")
+    }
+  }
+
+  // ── Delete task ──────────────────────────────────────────────────────────
+  // We only remove from local state when the API confirms.
+  // Unlike toggle, we do NOT use optimistic update here because
+  // delete is a destructive action — better to wait for confirmation.
+  async function handleDeleteConfirm() {
+    if (deleteTarget === null) return
+    try {
+      await deleteTodo(deleteTarget)
+      setTodos((prev) => prev.filter((t) => t.id !== deleteTarget))
+      showToast("RECORD DELETED", "success")
+    } catch {
+      showToast("ERROR: Could not delete task", "error")
+    } finally {
+      setDeleteTarget(null)
     }
   }
 
@@ -281,7 +317,12 @@ export default function Home() {
         ) : (
           <div className="flex flex-col gap-1.5">
             {todos.map((todo) => (
-              <TodoItem key={todo.id} todo={todo} onToggle={handleToggle} />
+              <TodoItem
+                key={todo.id}
+                todo={todo}
+                onToggle={handleToggle}
+                onDelete={setDeleteTarget}
+              />
             ))}
           </div>
         )}
@@ -319,6 +360,35 @@ export default function Home() {
         )}
 
       </main>
+
+      {/* ConfirmDialog from shadcn/ui
+          Opens when deleteTarget has an id (not null)
+          Closes when deleteTarget is set back to null */}
+      <AlertDialog open={deleteTarget !== null} onOpenChange={() => setDeleteTarget(null)}>
+        <AlertDialogContent className="border border-cyan-900/60 bg-black font-mono">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-cyan-300 tracking-widest uppercase">
+              ⚠ Confirm deletion
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-cyan-600 text-xs">
+              This operation cannot be undone. Continue?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border border-cyan-800 bg-transparent text-cyan-400
+              hover:bg-cyan-950 hover:text-cyan-200 font-mono text-xs">
+              [CANCEL]
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              className="border border-red-700 bg-red-950/40 text-red-400
+                hover:bg-red-900/50 hover:text-red-200 font-mono text-xs"
+            >
+              [DELETE]
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Toast message={toast.message} visible={toast.visible} type={toast.type} />
 
