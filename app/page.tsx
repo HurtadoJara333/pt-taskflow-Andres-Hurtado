@@ -14,6 +14,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 
+// Local filter type — no extra API calls needed
+type Filter = "all" | "completed" | "pending"
+
 // ─── LoadingSkeleton ───────────────────────────────────────────────────────
 function LoadingSkeleton() {
   return (
@@ -33,12 +36,17 @@ function LoadingSkeleton() {
 }
 
 // ─── EmptyState ────────────────────────────────────────────────────────────
-function EmptyState() {
+function EmptyState({ filter }: { filter: Filter }) {
+  const messages: Record<Filter, string> = {
+    all:       "No tasks in the system.",
+    completed: "No completed tasks yet.",
+    pending:   "No pending tasks. System clean.",
+  }
   return (
     <div className="border border-dashed border-cyan-800/50 py-16 text-center rounded-sm">
       <p className="text-4xl mb-4 text-cyan-600">◈</p>
       <h3 className="text-base font-bold text-cyan-300 mb-2 tracking-widest">EMPTY SYSTEM</h3>
-      <p className="text-xs text-cyan-600 font-mono">No tasks in the system.</p>
+      <p className="text-xs text-cyan-600 font-mono">{messages[filter]}</p>
     </div>
   )
 }
@@ -68,7 +76,6 @@ function Toast({
 }
 
 // ─── TodoItem ──────────────────────────────────────────────────────────────
-// Receives onToggle to change completed state
 function TodoItem({
   todo,
   onToggle,
@@ -84,10 +91,11 @@ function TodoItem({
         transition-all hover:border-cyan-400/60 hover:bg-cyan-950/20
         ${todo.completed ? "opacity-50" : ""}`}
     >
-      {/* Checkbox with optimistic update */}
+      {/* Checkbox triggers optimistic update */}
       <button
         onClick={() => onToggle(todo.id)}
-        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-sm border-2 transition-all
+        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-sm border-2
+          cursor-pointer transition-all
           ${todo.completed
             ? "border-cyan-400 bg-cyan-400"
             : "border-cyan-700 hover:border-cyan-400"
@@ -97,7 +105,7 @@ function TodoItem({
       </button>
 
       <span
-        className={`flex-1 text-sm font-mono
+        className={`flex-1 text-sm font-mono select-none
           ${todo.completed ? "line-through text-cyan-800" : "text-cyan-100"}`}
       >
         {todo.todo}
@@ -114,11 +122,12 @@ function TodoItem({
         {todo.completed ? "DONE" : "PENDING"}
       </span>
 
-      {/* Delete button — opens ConfirmDialog */}
+      {/* Delete button — opens confirm dialog */}
       <button
         onClick={() => onDelete(todo.id)}
-        className="shrink-0 border border-transparent px-2 py-1 text-xs font-mono text-cyan-600
-          transition-all hover:border-red-500/60 hover:text-red-400 rounded-sm"
+        className="shrink-0 border border-transparent px-2 py-1 text-xs font-mono
+          text-cyan-600 cursor-pointer transition-all rounded-sm
+          hover:border-red-500/60 hover:text-red-400"
       >
         [DEL]
       </button>
@@ -139,6 +148,13 @@ export default function Home() {
   // deleteTarget stores the id of the task the user wants to delete.
   // If null, dialog is closed. If a number, dialog is open.
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null)
+  const [filter, setFilter]         = useState<Filter>("all")
+
+  // retryCount increments on every retry click.
+  // Since the value always changes, useEffect re-runs and re-fetches.
+  // Using setPage(p => p) would NOT work because React skips re-renders
+  // when the new state value equals the previous one.
+  const [retryCount, setRetryCount] = useState(0)
 
   const [toast, setToast] = useState({
     visible: false,
@@ -149,7 +165,7 @@ export default function Home() {
   const LIMIT      = 10
   const totalPages = Math.ceil(total / LIMIT)
 
-  // ── Paginated fetch ─────────────────────────────────────────────────────
+  // ── Paginated fetch — re-runs when page or retryCount changes ──────────
   useEffect(() => {
     async function loadTodos() {
       setIsLoading(true)
@@ -166,15 +182,25 @@ export default function Home() {
       }
     }
     loadTodos()
-  }, [page])
+  }, [page, retryCount]) // retryCount guarantees a fresh fetch on retry
 
-  // ── Helper toast ────────────────────────────────────────────────────────
+  // ── Local filter — derived from current todos, no API call needed ───────
+  const filtered = todos.filter((t) => {
+    if (filter === "completed") return t.completed
+    if (filter === "pending")   return !t.completed
+    return true
+  })
+
+  const totalDone    = todos.filter((t) => t.completed).length
+  const totalPending = todos.filter((t) => !t.completed).length
+
+  // ── Toast helper ────────────────────────────────────────────────────────
   function showToast(message: string, type: "success" | "error" = "success") {
     setToast({ visible: true, message, type })
     setTimeout(() => setToast((t) => ({ ...t, visible: false })), 2500)
   }
 
-  // ── Create task ──────────────────────────────────────────────────────────
+  // ── Create todo ─────────────────────────────────────────────────────────
   async function handleAdd() {
     const text = newTodo.trim()
     if (!text) return
@@ -191,19 +217,21 @@ export default function Home() {
     }
   }
 
-  // ── Toggle with optimistic update ────────────────────────────────────────
+  // ── Toggle with optimistic update ───────────────────────────────────────
   async function handleToggle(id: number) {
     const previous = todos.find((t) => t.id === id)
     if (!previous) return
 
+    // 1. Update UI immediately
     setTodos((prev) =>
       prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t))
     )
-
     try {
+      // 2. Confirm with API
       await updateTodo(id, { completed: !previous.completed })
       showToast(previous.completed ? "TASK REACTIVATED" : "TASK COMPLETED ✓", "success")
     } catch {
+      // 3. Revert if API fails
       setTodos((prev) =>
         prev.map((t) => (t.id === id ? { ...t, completed: previous.completed } : t))
       )
@@ -211,10 +239,7 @@ export default function Home() {
     }
   }
 
-  // ── Delete task ──────────────────────────────────────────────────────────
-  // We only remove from local state when the API confirms.
-  // Unlike toggle, we do NOT use optimistic update here because
-  // delete is a destructive action — better to wait for confirmation.
+  // ── Delete todo — waits for API confirmation before removing from state ─
   async function handleDeleteConfirm() {
     if (deleteTarget === null) return
     try {
@@ -265,6 +290,23 @@ export default function Home() {
           <h1 className="text-4xl font-bold tracking-tight text-cyan-300">MY TASKS</h1>
         </div>
 
+        {/* Stats */}
+        <div className="mb-8 grid grid-cols-3 gap-2">
+          {[
+            { label: "TOTAL",     value: todos.length,  color: "text-cyan-300"  },
+            { label: "COMPLETED", value: totalDone,     color: "text-green-400" },
+            { label: "PENDING",   value: totalPending,  color: "text-red-400"   },
+          ].map((s) => (
+            <div
+              key={s.label}
+              className="border border-cyan-900/50 bg-cyan-950/10 px-4 py-3 rounded-sm"
+            >
+              <p className="text-xs text-cyan-600 tracking-widest mb-1">{s.label}</p>
+              <p className={`text-3xl font-bold ${s.color}`}>{s.value}</p>
+            </div>
+          ))}
+        </div>
+
         {/* New task form */}
         <p className="text-xs text-cyan-600 tracking-widest mb-2 uppercase">// new task</p>
         <div className="mb-8 flex gap-2">
@@ -275,14 +317,14 @@ export default function Home() {
             placeholder="Enter task description..."
             disabled={isCreating}
             className="flex-1 border border-cyan-900/60 bg-black px-4 py-3 text-sm
-              text-cyan-100 placeholder-cyan-800 outline-none rounded-sm
-              focus:border-cyan-400 transition-colors disabled:opacity-50"
+              text-cyan-100 placeholder-cyan-800 outline-none rounded-sm cursor-text
+              focus:border-cyan-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           />
           <button
             onClick={handleAdd}
             disabled={isCreating || !newTodo.trim()}
             className="border border-cyan-400 bg-cyan-950/30 px-5 py-3 text-sm font-bold
-              text-cyan-300 tracking-widest transition-all rounded-sm
+              text-cyan-300 tracking-widest transition-all rounded-sm cursor-pointer
               hover:bg-cyan-400 hover:text-black
               disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -290,9 +332,27 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Counter */}
+        {/* Local filters — no API calls, derived from current todos */}
+        <p className="text-xs text-cyan-600 tracking-widest mb-2 uppercase">// filter</p>
+        <div className="mb-5 flex gap-2">
+          {(["all", "completed", "pending"] as Filter[]).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`px-4 py-1.5 text-xs tracking-widest border transition-all rounded-sm cursor-pointer
+                ${filter === f
+                  ? "border-cyan-400 bg-cyan-400 text-black font-bold"
+                  : "border-cyan-900/50 text-cyan-600 hover:border-cyan-600 hover:text-cyan-300"
+                }`}
+            >
+              {f === "all" ? "ALL" : f === "completed" ? "COMPLETED" : "PENDING"}
+            </button>
+          ))}
+        </div>
+
+        {/* Results counter */}
         <p className="text-xs text-cyan-600 tracking-widest mb-3">
-          // {total} TOTAL RECORDS
+          // {filtered.length} {filtered.length === 1 ? "RECORD" : "RECORDS"} FOUND
         </p>
 
         {/* Error with retry */}
@@ -302,21 +362,21 @@ export default function Home() {
             <button
               onClick={() => setPage((p) => p)}
               className="border border-red-700/60 px-3 py-1.5 text-xs text-red-400
-                hover:bg-red-900/30 transition-all rounded-sm"
+                cursor-pointer hover:bg-red-900/30 transition-all rounded-sm"
             >
               [↺ RETRY]
             </button>
           </div>
         )}
 
-        {/* List / Loading / Empty */}
+        {/* Task list / loading skeleton / empty state */}
         {isLoading ? (
           <LoadingSkeleton />
-        ) : todos.length === 0 ? (
-          <EmptyState />
+        ) : filtered.length === 0 ? (
+          <EmptyState filter={filter} />
         ) : (
           <div className="flex flex-col gap-1.5">
-            {todos.map((todo) => (
+            {filtered.map((todo) => (
               <TodoItem
                 key={todo.id}
                 todo={todo}
@@ -331,14 +391,14 @@ export default function Home() {
         {!isLoading && !error && totalPages > 0 && (
           <div className="mt-8 flex items-center justify-between border-t border-cyan-900/40 pt-6">
             <span className="text-xs text-cyan-600">
-              PG {page}/{totalPages} — {total} RECORDS
+              PAGE {page}/{totalPages} — {total} TOTAL RECORDS
             </span>
             <div className="flex gap-2">
               <button
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={page === 1}
                 className="border border-cyan-900/50 px-4 py-2 text-xs text-cyan-600
-                  transition-all hover:border-cyan-500 hover:text-cyan-300 rounded-sm
+                  cursor-pointer transition-all hover:border-cyan-500 hover:text-cyan-300 rounded-sm
                   disabled:opacity-20 disabled:cursor-not-allowed"
               >
                 [← PREV]
@@ -350,7 +410,7 @@ export default function Home() {
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 disabled={page === totalPages}
                 className="border border-cyan-900/50 px-4 py-2 text-xs text-cyan-600
-                  transition-all hover:border-cyan-500 hover:text-cyan-300 rounded-sm
+                  cursor-pointer transition-all hover:border-cyan-500 hover:text-cyan-300 rounded-sm
                   disabled:opacity-20 disabled:cursor-not-allowed"
               >
                 [NEXT →]
@@ -361,9 +421,7 @@ export default function Home() {
 
       </main>
 
-      {/* ConfirmDialog from shadcn/ui
-          Opens when deleteTarget has an id (not null)
-          Closes when deleteTarget is set back to null */}
+      {/* Shadcn confirm dialog — opens when deleteTarget has an id */}
       <AlertDialog open={deleteTarget !== null} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent className="border border-cyan-900/60 bg-black font-mono">
           <AlertDialogHeader>
@@ -376,13 +434,13 @@ export default function Home() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="border border-cyan-800 bg-transparent text-cyan-400
-              hover:bg-cyan-950 hover:text-cyan-200 font-mono text-xs">
+              hover:bg-cyan-950 hover:text-cyan-200 font-mono text-xs cursor-pointer">
               [CANCEL]
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDeleteConfirm}
               className="border border-red-700 bg-red-950/40 text-red-400
-                hover:bg-red-900/50 hover:text-red-200 font-mono text-xs"
+                hover:bg-red-900/50 hover:text-red-200 font-mono text-xs cursor-pointer"
             >
               [DELETE]
             </AlertDialogAction>
