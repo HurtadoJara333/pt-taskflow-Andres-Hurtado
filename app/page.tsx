@@ -3,13 +3,14 @@
  * Main task management page. Renders todo list, Cortana AI terminal,
  * filters, pagination, and confirmation dialogs. Data lives in Zustand store.
  */
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { useTodos } from "@/hooks/useTodos"
 import { useTodoStore } from "@/store/todoStore"
 import { updateTodo, deleteTodo } from "@/lib/api"
 import type { Todo } from "@/types/todo"
 import { CortanaTerminal } from "@/components/cortanaTerminal"
 import { Toast } from "@/components/ui/toast"
+import { CyberpunkEffect, type CyberpunkEffectType } from "@/components/cyberpunkEffect"
 import { useCortana } from "@/hooks/useCortana"
 import {
   AlertDialog,
@@ -104,6 +105,16 @@ export default function Home() {
   const [isCreating, setIsCreating]     = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null)
   const [toast, setToast] = useState({ visible: false, message: "", type: "success" as "success" | "error" })
+  const [cyberEffect, setCyberEffect] = useState<CyberpunkEffectType | null>(null)
+  const effectTimeout = useRef<number | null>(null)
+
+  function triggerCyberEffect(type: CyberpunkEffectType) {
+    setCyberEffect(type)
+    if (effectTimeout.current) {
+      window.clearTimeout(effectTimeout.current)
+    }
+    effectTimeout.current = window.setTimeout(() => setCyberEffect(null), 700)
+  }
 
   const {
     terminalHistory,
@@ -119,6 +130,11 @@ export default function Home() {
     onDeleteTodo: setDeleteTarget,
     onFilter: setFilter,
   })
+
+  async function handleAgentConfirmWithEffect() {
+    await handleAgentConfirm()
+    triggerCyberEffect("cortana")
+  }
 
   const { total, page, totalPages, isLoading, error, setPage, retry } = useTodos()
 
@@ -148,6 +164,7 @@ export default function Home() {
       }
       addTodo(localTodo)
       showToast("TASK ADDED TO SYSTEM", "success")
+      triggerCyberEffect("create")
     } catch {
       showToast("ERROR: Could not create task", "error")
     } finally {
@@ -180,6 +197,7 @@ export default function Home() {
       }
       removeTodo(deleteTarget)
       showToast("RECORD DELETED", "success")
+      triggerCyberEffect("delete")
     } catch {
       showToast("ERROR: Could not delete task", "error")
     } finally {
@@ -371,7 +389,7 @@ export default function Home() {
               [ABORT]
             </AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleAgentConfirm}
+              onClick={handleAgentConfirmWithEffect}
               className="border border-cyan-500 bg-cyan-950/40 text-cyan-300
                 hover:bg-cyan-900/50 hover:text-cyan-100 font-mono text-xs cursor-pointer"
             >
@@ -411,6 +429,7 @@ export default function Home() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <CyberpunkEffect type={cyberEffect} />
       <Toast message={toast.message} visible={toast.visible} type={toast.type} />
 
     </div>
