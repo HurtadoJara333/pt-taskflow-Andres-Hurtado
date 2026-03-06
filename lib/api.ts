@@ -8,7 +8,7 @@ import {
   
   const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
   
-  // Wrapper genérico para manejar errores de red y de la API de forma uniforme
+  // Generic wrapper to handle network and API errors uniformly
   async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     const res = await fetch(`${BASE_URL}${path}`, {
       headers: { "Content-Type": "application/json" },

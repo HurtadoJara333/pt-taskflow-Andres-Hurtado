@@ -1,0 +1,24 @@
+// Mimics card shape while loading
+export function LoadingSkeleton() {
+    return (
+      <div className="space-y-3">
+        {/* 5 skeleton placeholders */}
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div
+            key={i}
+            className="flex items-center gap-3 p-4 rounded-lg border border-gray-100 animate-pulse"
+          >
+            {/* Circle placeholder for checkbox */}
+            <div className="w-5 h-5 rounded-full bg-gray-200 shrink-0" />
+  
+            <div className="flex-1 space-y-2">
+              {/* Long line for text */}
+              <div className="h-4 bg-gray-200 rounded w-3/4" />
+              {/* Short line for userId */}
+              <div className="h-3 bg-gray-100 rounded w-1/4" />
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
