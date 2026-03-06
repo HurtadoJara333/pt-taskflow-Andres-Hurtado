@@ -1,58 +1,63 @@
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { fetchTodos } from "@/lib/api"
-import { useTodoStore } from "@/store/todoStore"
+import type { Todo, TodosResponse } from "@/types/todo"
 
-export function useTodos() {
-  // subscription
-  const currentPage = useTodoStore((state) => state.currentPage)
-  const setTodos    = useTodoStore((state) => state.setTodos)
-  const setLoading  = useTodoStore((state) => state.setLoading)
-  const setError    = useTodoStore((state) => state.setError)
+// Return type — everything the UI needs from this hook
+interface UseTodosReturn {
+  todos: Todo[]
+  total: number
+  page: number
+  totalPages: number
+  isLoading: boolean
+  error: string | null
+  setPage: (page: number) => void
+  retry: () => void
+  setTodos: React.Dispatch<React.SetStateAction<Todo[]>>
+}
+
+const LIMIT = 10
+
+export function useTodos(): UseTodosReturn {
+  const [todos, setTodos]         = useState<Todo[]>([])
+  const [total, setTotal]         = useState(0)
+  const [page, setPage]           = useState(1)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError]         = useState<string | null>(null)
+
+  // retryCount increments on every retry — guarantees useEffect re-runs
+  // even when page hasn't changed (setPage(p => p) would NOT work)
+  const [retryCount, setRetryCount] = useState(0)
+
+  const totalPages = Math.ceil(total / LIMIT)
 
   useEffect(() => {
     // initial fetch + updates
     async function loadTodos() {
-      setLoading(true)
+      setIsLoading(true)
       setError(null)
-
       try {
-        const data = await fetchTodos(currentPage)
-        setTodos(data.todos, data.total)
+        const data: TodosResponse = await fetchTodos(page, LIMIT)
+        setTodos(data.todos)
+        setTotal(data.total)
       } catch (err) {
-        setError("Could not load tasks. Please try again.")
+        setError("ERROR: Could not connect to the API.")
+        console.error(err)
       } finally {
-        setLoading(false)
+        setIsLoading(false)
       }
     }
-
     loadTodos()
-  }, [currentPage])
-  // Expose what components need
-  const todos       = useTodoStore((state) => state.todos)
-  const total       = useTodoStore((state) => state.total)
-  const isLoading   = useTodoStore((state) => state.isLoading)
-  const error       = useTodoStore((state) => state.error)
-  const filter      = useTodoStore((state) => state.filter)
-  const setPage     = useTodoStore((state) => state.setPage)
-  const setFilter   = useTodoStore((state) => state.setFilter)
-
-  // Local filtering — no extra API calls
-  const filteredTodos = todos.filter((todo) => {
-    if (filter === "completed") return todo.completed
-    if (filter === "pending")   return !todo.completed
-    return true // filter === "all"
-  })
-
-  const totalPages = Math.ceil(total / 10)
+  }, [page, retryCount])
 
   return {
-    todos: filteredTodos,
+    todos,
+    total,
+    page,
+    totalPages,
     isLoading,
     error,
-    currentPage,
-    totalPages,
-    filter,
     setPage,
-    setFilter,
+    retry: () => setRetryCount((c) => c + 1),
+    setTodos,
   }
 }

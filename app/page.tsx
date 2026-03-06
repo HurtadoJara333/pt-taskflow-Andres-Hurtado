@@ -1,8 +1,9 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { fetchTodos, createTodo, updateTodo, deleteTodo } from "@/lib/api"
-import type { Todo, TodosResponse } from "@/types/todo"
+import { useState } from "react"
+import { useTodos } from "@/hooks/useTodos"
+import { useTodoMutations } from "@/hooks/useTodoMutations"
+import type { Todo } from "@/types/todo"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -136,55 +137,37 @@ function TodoItem({
 }
 
 // ─── PAGE ──────────────────────────────────────────────────────────────────
+// This component only handles UI state (filter, input, dialog, toast).
+// All fetching and mutation logic lives in the custom hooks.
 export default function Home() {
-  const [todos, setTodos]           = useState<Todo[]>([])
-  const [total, setTotal]           = useState(0)
-  const [page, setPage]             = useState(1)
-  const [isLoading, setIsLoading]   = useState(false)
-  const [error, setError]           = useState<string | null>(null)
-  const [newTodo, setNewTodo]       = useState("")
-  const [isCreating, setIsCreating] = useState(false)
-
-  // deleteTarget stores the id of the task the user wants to delete.
-  // If null, dialog is closed. If a number, dialog is open.
+  // UI state — belongs in the component
+  const [filter, setFilter]             = useState<Filter>("all")
+  const [newTodo, setNewTodo]           = useState("")
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null)
-  const [filter, setFilter]         = useState<Filter>("all")
-
-  // retryCount increments on every retry click.
-  // Since the value always changes, useEffect re-runs and re-fetches.
-  // Using setPage(p => p) would NOT work because React skips re-renders
-  // when the new state value equals the previous one.
-  const [retryCount, setRetryCount] = useState(0)
-
-  const [toast, setToast] = useState({
+  const [toast, setToast]               = useState({
     visible: false,
     message: "",
     type: "success" as "success" | "error",
   })
 
-  const LIMIT      = 10
-  const totalPages = Math.ceil(total / LIMIT)
+  // Toast helper — shared between both hooks
+  function showToast(message: string, type: "success" | "error" = "success") {
+    setToast({ visible: true, message, type })
+    setTimeout(() => setToast((t) => ({ ...t, visible: false })), 2500)
+  }
 
-  // ── Paginated fetch — re-runs when page or retryCount changes ──────────
-  useEffect(() => {
-    async function loadTodos() {
-      setIsLoading(true)
-      setError(null)
-      try {
-        const data: TodosResponse = await fetchTodos(page, LIMIT)
-        setTodos(data.todos)
-        setTotal(data.total)
-      } catch (err) {
-        setError("ERROR: Could not connect to the API.")
-        console.error(err)
-      } finally {
-        setIsLoading(false)
-      }
-    }
-    loadTodos()
-  }, [page, retryCount]) // retryCount guarantees a fresh fetch on retry
+  // Fetching logic — lives in useTodos
+  const { todos, total, page, totalPages, isLoading, error, setPage, retry, setTodos } =
+    useTodos()
 
-  // ── Local filter — derived from current todos, no API call needed ───────
+  // Mutation logic — lives in useTodoMutations
+  const { isCreating, handleAdd, handleToggle, handleDeleteConfirm } = useTodoMutations({
+    todos,
+    setTodos,
+    showToast,
+  })
+
+  // Local filter — derived from current todos, no API call needed
   const filtered = todos.filter((t) => {
     if (filter === "completed") return t.completed
     if (filter === "pending")   return !t.completed
@@ -193,65 +176,6 @@ export default function Home() {
 
   const totalDone    = todos.filter((t) => t.completed).length
   const totalPending = todos.filter((t) => !t.completed).length
-
-  // ── Toast helper ────────────────────────────────────────────────────────
-  function showToast(message: string, type: "success" | "error" = "success") {
-    setToast({ visible: true, message, type })
-    setTimeout(() => setToast((t) => ({ ...t, visible: false })), 2500)
-  }
-
-  // ── Create todo ─────────────────────────────────────────────────────────
-  async function handleAdd() {
-    const text = newTodo.trim()
-    if (!text) return
-    setIsCreating(true)
-    try {
-      const created = await createTodo({ todo: text, completed: false, userId: 1 })
-      setTodos((prev) => [created, ...prev])
-      setNewTodo("")
-      showToast("TASK ADDED TO SYSTEM", "success")
-    } catch {
-      showToast("ERROR: Could not create task", "error")
-    } finally {
-      setIsCreating(false)
-    }
-  }
-
-  // ── Toggle with optimistic update ───────────────────────────────────────
-  async function handleToggle(id: number) {
-    const previous = todos.find((t) => t.id === id)
-    if (!previous) return
-
-    // 1. Update UI immediately
-    setTodos((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t))
-    )
-    try {
-      // 2. Confirm with API
-      await updateTodo(id, { completed: !previous.completed })
-      showToast(previous.completed ? "TASK REACTIVATED" : "TASK COMPLETED ✓", "success")
-    } catch {
-      // 3. Revert if API fails
-      setTodos((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, completed: previous.completed } : t))
-      )
-      showToast("ERROR: Could not update task", "error")
-    }
-  }
-
-  // ── Delete todo — waits for API confirmation before removing from state ─
-  async function handleDeleteConfirm() {
-    if (deleteTarget === null) return
-    try {
-      await deleteTodo(deleteTarget)
-      setTodos((prev) => prev.filter((t) => t.id !== deleteTarget))
-      showToast("RECORD DELETED", "success")
-    } catch {
-      showToast("ERROR: Could not delete task", "error")
-    } finally {
-      setDeleteTarget(null)
-    }
-  }
 
   return (
     <div className="min-h-screen bg-black text-cyan-100 font-mono">
@@ -313,7 +237,11 @@ export default function Home() {
           <input
             value={newTodo}
             onChange={(e) => setNewTodo(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                handleAdd(newTodo).then(() => setNewTodo(""))
+              }
+            }}
             placeholder="Enter task description..."
             disabled={isCreating}
             className="flex-1 border border-cyan-900/60 bg-black px-4 py-3 text-sm
@@ -321,7 +249,7 @@ export default function Home() {
               focus:border-cyan-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           />
           <button
-            onClick={handleAdd}
+            onClick={() => handleAdd(newTodo).then(() => setNewTodo(""))}
             disabled={isCreating || !newTodo.trim()}
             className="border border-cyan-400 bg-cyan-950/30 px-5 py-3 text-sm font-bold
               text-cyan-300 tracking-widest transition-all rounded-sm cursor-pointer
@@ -332,7 +260,7 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Local filters — no API calls, derived from current todos */}
+        {/* Local filters */}
         <p className="text-xs text-cyan-600 tracking-widest mb-2 uppercase">// filter</p>
         <div className="mb-5 flex gap-2">
           {(["all", "completed", "pending"] as Filter[]).map((f) => (
@@ -360,7 +288,7 @@ export default function Home() {
           <div className="mb-4 border border-red-700/60 bg-red-950/20 p-4 rounded-sm">
             <p className="text-xs text-red-400 mb-3">{error}</p>
             <button
-              onClick={() => setPage((p) => p)}
+              onClick={retry}
               className="border border-red-700/60 px-3 py-1.5 text-xs text-red-400
                 cursor-pointer hover:bg-red-900/30 transition-all rounded-sm"
             >
@@ -395,7 +323,7 @@ export default function Home() {
             </span>
             <div className="flex gap-2">
               <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                onClick={() => setPage(Math.max(1, page - 1))}
                 disabled={page === 1}
                 className="border border-cyan-900/50 px-4 py-2 text-xs text-cyan-600
                   cursor-pointer transition-all hover:border-cyan-500 hover:text-cyan-300 rounded-sm
@@ -407,7 +335,7 @@ export default function Home() {
                 {page}
               </span>
               <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                onClick={() => setPage(Math.min(totalPages, page + 1))}
                 disabled={page === totalPages}
                 className="border border-cyan-900/50 px-4 py-2 text-xs text-cyan-600
                   cursor-pointer transition-all hover:border-cyan-500 hover:text-cyan-300 rounded-sm
@@ -438,7 +366,7 @@ export default function Home() {
               [CANCEL]
             </AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDeleteConfirm}
+              onClick={() => deleteTarget !== null && handleDeleteConfirm(deleteTarget).then(() => setDeleteTarget(null))}
               className="border border-red-700 bg-red-950/40 text-red-400
                 hover:bg-red-900/50 hover:text-red-200 font-mono text-xs cursor-pointer"
             >
